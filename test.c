@@ -1,8 +1,11 @@
 #include "test.h"
 
+#include <inttypes.h>
 #include <furi_hal_gpio.h>
 #include <furi_hal_light.h>
 #include <furi_hal_resources.h>
+#include <furi_hal_cortex.h>
+#include <stm32wbxx.h>
 
 #define TAG "TEST"
 
@@ -17,21 +20,33 @@ uint32_t test_exit(void* context) {
     return VIEW_NONE;
 }
 
-const GpioPin* my_gpio = &gpio_usart_rx;
-uint8_t counter = 0;
+const GpioPin* my_gpio = &gpio_ext_pa4;
+uint32_t dur_low, dur_hig;
 
+volatile uint32_t tick_last_h = 0;
+volatile uint32_t tick_last_l = 0;
+uint32_t cur_tick;
 
 static void my_isr(void* ctx_) {
     UNUSED(ctx_);
-    counter++;
-//    if (furi_hal_gpio_read(my_gpio))
-//        furi_hal_light_set(LightRed, 100);
-//    else
-//        furi_hal_light_set(LightRed | LightGreen | LightBlue, 0);
+
+    cur_tick = DWT->CYCCNT;
+
+    if (furi_hal_gpio_read(my_gpio)) {
+        if (tick_last_l > 0) {
+            dur_low = cur_tick - tick_last_l;
+        }
+        tick_last_l = cur_tick;
+    } else {
+        if (tick_last_h > 0) {
+            dur_hig = cur_tick - tick_last_h;
+        }
+        tick_last_h = cur_tick;
+    }
 }
 
 static void start_interrupts() {
-    furi_hal_gpio_init(my_gpio, GpioModeInterruptRise, GpioPullNo, GpioSpeedLow);
+    furi_hal_gpio_init(my_gpio, GpioModeInterruptRiseFall, GpioPullNo, GpioSpeedLow);
     furi_hal_gpio_add_int_callback(my_gpio, my_isr, NULL);
     furi_hal_gpio_enable_int_callback(my_gpio);
 }
@@ -42,16 +57,9 @@ static void stop_interrupts() {
 }
 
 static void do_test() {
-    furi_hal_light_set(LightRed, counter);
-    FURI_LOG_I(TAG, "Val %d", counter);
-//    if (furi_hal_gpio_read(my_gpio)) {
-//        FURI_LOG_I(TAG, "On");
-//        furi_hal_light_set(LightRed, 100);
-//    }
-//    else {
-//        FURI_LOG_I(TAG, "Off");
-//        furi_hal_light_set(LightRed | LightGreen | LightBlue, 0);
-//    }
+    FURI_LOG_I(TAG, "High %"PRIu32, dur_hig / furi_hal_cortex_instructions_per_microsecond());
+    FURI_LOG_I(TAG, "Low %"PRIu32, dur_low / furi_hal_cortex_instructions_per_microsecond());
+//    FURI_LOG_I(TAG, "Int per us %"PRIu32, furi_hal_cortex_instructions_per_microsecond());
 }
 
 
