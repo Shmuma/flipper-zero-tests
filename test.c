@@ -23,25 +23,18 @@ uint32_t test_exit(void* context) {
 const GpioPin* my_gpio = &gpio_ext_pa4;
 uint32_t dur_low, dur_hig;
 
-volatile uint32_t tick_last_h = 0;
-volatile uint32_t tick_last_l = 0;
-uint32_t cur_tick;
+uint32_t cur_tick, prev_tick = 0;
 
 static void my_isr(void* ctx_) {
     UNUSED(ctx_);
 
+    prev_tick = cur_tick;
     cur_tick = DWT->CYCCNT;
 
     if (furi_hal_gpio_read(my_gpio)) {
-        if (tick_last_l > 0) {
-            dur_low = cur_tick - tick_last_l;
-        }
-        tick_last_l = cur_tick;
+        dur_low = cur_tick - prev_tick;
     } else {
-        if (tick_last_h > 0) {
-            dur_hig = cur_tick - tick_last_h;
-        }
-        tick_last_h = cur_tick;
+        dur_hig = cur_tick - prev_tick;
     }
 }
 
