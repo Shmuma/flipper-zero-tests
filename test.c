@@ -21,25 +21,28 @@ uint32_t test_exit(void* context) {
 }
 
 const GpioPin* my_gpio = &gpio_ext_pa4;
-uint32_t dur_low, dur_hig;
+volatile uint32_t dur_low, dur_hig;
 
-uint32_t cur_tick, prev_tick = 0;
+volatile uint64_t prev_dwt = 0;
+volatile uint64_t last_dwt = 0;
+volatile uint64_t dur;
 
 static void my_isr(void* ctx_) {
     UNUSED(ctx_);
 
-    prev_tick = cur_tick;
-    cur_tick = DWT->CYCCNT;
+    prev_dwt = last_dwt;
+    last_dwt += DWT->CYCCNT - (uint32_t)(last_dwt);
+    dur = last_dwt - prev_dwt;
 
     if (furi_hal_gpio_read(my_gpio)) {
-        dur_low = cur_tick - prev_tick;
+        dur_low = dur;
     } else {
-        dur_hig = cur_tick - prev_tick;
+        dur_hig = dur;
     }
 }
 
 static void start_interrupts() {
-    furi_hal_gpio_init(my_gpio, GpioModeInterruptRiseFall, GpioPullNo, GpioSpeedLow);
+    furi_hal_gpio_init(my_gpio, GpioModeInterruptRiseFall, GpioPullNo, GpioSpeedHigh);
     furi_hal_gpio_add_int_callback(my_gpio, my_isr, NULL);
     furi_hal_gpio_enable_int_callback(my_gpio);
 }
@@ -50,8 +53,8 @@ static void stop_interrupts() {
 }
 
 static void do_test() {
-    FURI_LOG_I(TAG, "High %"PRIu32, dur_hig / furi_hal_cortex_instructions_per_microsecond());
-    FURI_LOG_I(TAG, "Low %"PRIu32, dur_low / furi_hal_cortex_instructions_per_microsecond());
+    FURI_LOG_I(TAG, "High %"PRIu32, dur_hig >> 6);
+    FURI_LOG_I(TAG, "Low %"PRIu32, dur_low >> 6);
 //    FURI_LOG_I(TAG, "Int per us %"PRIu32, furi_hal_cortex_instructions_per_microsecond());
 }
 
