@@ -6,6 +6,8 @@
 #include <furi_hal_resources.h>
 #include <furi_hal_cortex.h>
 #include <stm32wbxx.h>
+#include <stm32wbxx_ll_tim.h>
+#include <furi_hal_interrupt.h>
 
 #define TAG "TEST"
 
@@ -20,36 +22,104 @@ uint32_t test_exit(void* context) {
     return VIEW_NONE;
 }
 
-const GpioPin* my_gpio = &gpio_ext_pa4;
-volatile uint32_t dur_low, dur_hig;
+const GpioPin* my_gpio = &gpio_ext_pb3;
+volatile uint32_t dur, dur_low, dur_hig;
 
-volatile uint64_t prev_dwt = 0;
-volatile uint64_t last_dwt = 0;
-volatile uint64_t dur;
+//volatile uint64_t prev_dwt = 0;
+//volatile uint64_t last_dwt = 0;
+//volatile uint64_t dur;
+//
+//static void my_isr(void* ctx_) {
+//    UNUSED(ctx_);
+//
+//    prev_dwt = last_dwt;
+//    last_dwt += DWT->CYCCNT - (uint32_t)(last_dwt);
+//    dur = last_dwt - prev_dwt;
+//
+//    if (furi_hal_gpio_read(my_gpio)) {
+//        dur_low = dur;
+//    } else {
+//        dur_hig = dur;
+//    }
+//}
 
-static void my_isr(void* ctx_) {
+
+static void my_isr_tim(void* ctx_) {
     UNUSED(ctx_);
 
-    prev_dwt = last_dwt;
-    last_dwt += DWT->CYCCNT - (uint32_t)(last_dwt);
-    dur = last_dwt - prev_dwt;
-
-    if (furi_hal_gpio_read(my_gpio)) {
-        dur_low = dur;
-    } else {
+    // Channel 1
+    if(LL_TIM_IsActiveFlag_CC1(TIM2)) {
+        LL_TIM_ClearFlag_CC1(TIM2);
+        dur = LL_TIM_IC_GetCaptureCH1(TIM2);
         dur_hig = dur;
+    }
+    // Channel 2
+    if(LL_TIM_IsActiveFlag_CC2(TIM2)) {
+        LL_TIM_ClearFlag_CC2(TIM2);
+        dur_low = LL_TIM_IC_GetCaptureCH2(TIM2) - dur;
     }
 }
 
+
 static void start_interrupts() {
-    furi_hal_gpio_init(my_gpio, GpioModeInterruptRiseFall, GpioPullNo, GpioSpeedHigh);
-    furi_hal_gpio_add_int_callback(my_gpio, my_isr, NULL);
-    furi_hal_gpio_enable_int_callback(my_gpio);
+//    furi_hal_gpio_init(my_gpio, GpioModeInterruptRiseFall, GpioPullNo, GpioSpeedHigh);
+//    furi_hal_gpio_add_int_callback(my_gpio, my_isr, NULL);
+//    furi_hal_gpio_enable_int_callback(my_gpio);
+    furi_hal_gpio_init_ex(my_gpio, GpioModeAltFunctionPushPull, GpioPullNo, GpioSpeedLow, GpioAltFn1TIM2);
+
+    // Timer: base
+    LL_TIM_InitTypeDef TIM_InitStruct = {0};
+    TIM_InitStruct.Prescaler = 64 - 1;
+    TIM_InitStruct.CounterMode = LL_TIM_COUNTERMODE_UP;
+    TIM_InitStruct.Autoreload = 0x7FFFFFFE;
+    TIM_InitStruct.ClockDivision = LL_TIM_CLOCKDIVISION_DIV4;
+    LL_TIM_Init(TIM2, &TIM_InitStruct);
+
+    // Timer: advanced
+    LL_TIM_SetClockSource(TIM2, LL_TIM_CLOCKSOURCE_INTERNAL);
+    LL_TIM_DisableARRPreload(TIM2);
+    LL_TIM_SetTriggerInput(TIM2, LL_TIM_TS_TI2FP2);
+    LL_TIM_SetSlaveMode(TIM2, LL_TIM_SLAVEMODE_RESET);
+    LL_TIM_SetTriggerOutput(TIM2, LL_TIM_TRGO_RESET);
+    LL_TIM_EnableMasterSlaveMode(TIM2);
+    LL_TIM_DisableDMAReq_TRIG(TIM2);
+    LL_TIM_DisableIT_TRIG(TIM2);
+
+    // Timer: channel 1 indirect
+    LL_TIM_IC_SetActiveInput(TIM2, LL_TIM_CHANNEL_CH1, LL_TIM_ACTIVEINPUT_INDIRECTTI);
+    LL_TIM_IC_SetPrescaler(TIM2, LL_TIM_CHANNEL_CH1, LL_TIM_ICPSC_DIV1);
+    LL_TIM_IC_SetPolarity(TIM2, LL_TIM_CHANNEL_CH1, LL_TIM_IC_POLARITY_FALLING);
+    LL_TIM_IC_SetFilter(TIM2, LL_TIM_CHANNEL_CH1, LL_TIM_IC_FILTER_FDIV1);
+
+    // Timer: channel 2 direct
+    LL_TIM_IC_SetActiveInput(TIM2, LL_TIM_CHANNEL_CH2, LL_TIM_ACTIVEINPUT_DIRECTTI);
+    LL_TIM_IC_SetPrescaler(TIM2, LL_TIM_CHANNEL_CH2, LL_TIM_ICPSC_DIV1);
+    LL_TIM_IC_SetPolarity(TIM2, LL_TIM_CHANNEL_CH2, LL_TIM_IC_POLARITY_RISING);
+    LL_TIM_IC_SetFilter(TIM2, LL_TIM_CHANNEL_CH2, LL_TIM_IC_FILTER_FDIV32_N8);
+
+    // ISR setup
+    furi_hal_interrupt_set_isr(FuriHalInterruptIdTIM2, my_isr_tim, NULL);
+
+    // Interrupts and channels
+    LL_TIM_EnableIT_CC1(TIM2);
+    LL_TIM_EnableIT_CC2(TIM2);
+    LL_TIM_CC_EnableChannel(TIM2, LL_TIM_CHANNEL_CH1);
+    LL_TIM_CC_EnableChannel(TIM2, LL_TIM_CHANNEL_CH2);
+
+    // Start timer
+    LL_TIM_SetCounter(TIM2, 0);
+    LL_TIM_EnableCounter(TIM2);
 }
 
 static void stop_interrupts() {
-    furi_hal_gpio_disable_int_callback(my_gpio);
-    furi_hal_gpio_remove_int_callback(my_gpio);
+    FURI_CRITICAL_ENTER();
+    LL_TIM_DeInit(TIM2);
+    FURI_CRITICAL_EXIT();
+    furi_hal_interrupt_set_isr(FuriHalInterruptIdTIM2, NULL, NULL);
+    furi_hal_gpio_init(my_gpio, GpioModeAnalog, GpioPullNo, GpioSpeedLow);
+//
+//    furi_hal_gpio_disable_int_callback(my_gpio);
+//    furi_hal_gpio_remove_int_callback(my_gpio);
 }
 
 static void do_test() {
