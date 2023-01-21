@@ -1,6 +1,16 @@
 #include "test.h"
+#include <furi_hal_cortex.h>
+//#include <lib/driver/cc1101_regs.h>
 
 #define TAG "TEST"
+
+// Pinout of external cc1011 module connection to flipper, only g0 has to pb3 due to TIM2_2 special function
+const GpioPin* pin_g0 = &gpio_ext_pb3;      // Module 3: TIM2_2 - special pin
+const GpioPin* pin_cs = &gpio_ext_pb2;      // Module 4
+const GpioPin* pin_ck = &gpio_ext_pa4;      // Module 5
+const GpioPin* pin_mosi = &gpio_ext_pa7;    // Module 6
+const GpioPin* pin_miso = &gpio_ext_pa6;    // Module 7
+
 
 enum {
     TestSubmenuIndexStart,
@@ -13,6 +23,49 @@ uint32_t test_exit(void* context) {
     return VIEW_NONE;
 }
 
+
+uint8_t sspi_w(uint8_t dat) {
+    uint8_t dat_in = 0;
+
+    for (uint8_t mask = 0x80; mask > 0; mask >>= 1) {
+        furi_hal_gpio_write(pin_mosi, dat & mask);
+        furi_hal_gpio_write(pin_ck, true);
+        if (furi_hal_gpio_read(pin_miso))
+            dat_in |= mask;
+        furi_hal_gpio_write(pin_ck, false);
+    }
+    return dat_in;
+}
+
+
+void init_cc1011() {
+    FURI_LOG_I(TAG, "Reset pins");
+    furi_hal_gpio_init(pin_g0, GpioModeAnalog, GpioPullNo, GpioSpeedLow);
+    furi_hal_gpio_init(pin_cs, GpioModeOutputPushPull, GpioPullNo, GpioSpeedLow);
+    furi_hal_gpio_init(pin_ck, GpioModeOutputPushPull, GpioPullNo, GpioSpeedLow);
+    furi_hal_gpio_init(pin_mosi, GpioModeOutputPushPull, GpioPullNo, GpioSpeedLow);
+    furi_hal_gpio_init(pin_miso, GpioModeInput, GpioPullNo, GpioSpeedLow);
+    furi_hal_gpio_write(pin_cs, true);
+    furi_hal_gpio_write(pin_cs, false);
+
+    while(furi_hal_gpio_read(pin_miso))
+        ;
+    FURI_LOG_I(TAG, "Chip is ready");
+    uint8_t res = sspi_w(0x30);
+    FURI_LOG_I(TAG, "Reset, out=%x", res);
+}
+
+
+void deinit_cc1101() {
+    FURI_LOG_I(TAG, "Deinit cc1101");
+    furi_hal_gpio_write(pin_cs, true);
+
+    furi_hal_gpio_init(pin_g0, GpioModeInput, GpioPullNo, GpioSpeedLow);
+    furi_hal_gpio_init(pin_cs, GpioModeInput, GpioPullNo, GpioSpeedLow);
+    furi_hal_gpio_init(pin_ck, GpioModeInput, GpioPullNo, GpioSpeedLow);
+    furi_hal_gpio_init(pin_mosi, GpioModeInput, GpioPullNo, GpioSpeedLow);
+    furi_hal_gpio_init(pin_miso, GpioModeInput, GpioPullNo, GpioSpeedLow);
+}
 
 
 void test_submenu_callback(void* context, uint32_t index) {
@@ -28,7 +81,7 @@ void test_submenu_callback(void* context, uint32_t index) {
             FURI_LOG_I(TAG, "Stop something...");
             break;
         case TestSubmenuIndexTest:
-            FURI_LOG_I(TAG, "Do some test...");
+            init_cc1011();
             break;
     }
 }
